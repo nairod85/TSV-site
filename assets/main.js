@@ -75,19 +75,76 @@
     });
   }
 
-  // Références : filtre par catégorie + recherche
+  // Références : filtre par catégorie + recherche + fiche détaillée
   var refs = document.querySelectorAll('.ref');
+  var dataEl = document.getElementById('refs-data');
+  var DATA = dataEl ? JSON.parse(dataEl.textContent) : [];
   if (refs.length) {
-    var current = 'all', q = '';
+    var current = 'all', q = '', onlyDet = false;
     var counter = document.getElementById('ref-count');
     var norm = function (s) { return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); };
+    var hay = DATA.map(function (d) { return norm([d.name, d.town, d.adr, d.sub, d.moa, d.moad, d.archi, d.bet, (d.p || []).join(' '), (d.lots || []).join(' ')].join(' ')); });
     function apply() {
       var n = 0;
       refs.forEach(function (r) {
-        var ok = (current === 'all' || r.getAttribute('data-cat') === current) && (!q || norm(r.textContent).indexOf(q) > -1);
+        var i = +r.getAttribute('data-i'), d = DATA[i] || {};
+        var ok = (current === 'all' || r.getAttribute('data-cat') === current) && (!q || (hay[i] || norm(r.textContent)).indexOf(q) > -1) && (!onlyDet || !!d.mt);
         r.hidden = !ok; if (ok) n++;
       });
       if (counter) counter.textContent = n + (n > 1 ? ' références' : ' référence');
+    }
+    var det = document.getElementById('ref-det');
+    if (det) det.addEventListener('change', function () { onlyDet = det.checked; apply(); });
+
+    var dlg = document.getElementById('ref-dialog');
+    if (dlg && DATA.length) {
+      var cur = 0, opener = null;
+      var $ = function (id) { return document.getElementById(id); };
+      var e = function (s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; };
+      function visible() { return Array.prototype.filter.call(refs, function (r) { return !r.hidden; }).map(function (r) { return +r.getAttribute('data-i'); }); }
+      function render(i) {
+        cur = i; var d = DATA[i];
+        $('rd-sub').textContent = d.cat + ' · ' + d.sub;
+        $('rd-title').textContent = d.name;
+        $('rd-town').textContent = d.adr || d.town || '';
+        var media = $('rd-media'), inner = dlg.querySelector('.rd-inner');
+        if (d.img && d.img.length) {
+          inner.classList.remove('no-media'); media.hidden = false;
+          media.innerHTML = '<div class="rd-main"><img src="' + e(d.img[0]) + '" alt="' + e(d.name) + '"></div>' +
+            (d.img.length > 1 ? '<div class="rd-thumbs">' + d.img.map(function (s, k) { return '<button type="button" aria-label="Photo ' + (k + 1) + '"' + (k === 0 ? ' aria-current="true"' : '') + ' data-src="' + e(s) + '"><img src="' + e(s) + '" alt=""></button>'; }).join('') + '</div>' : '');
+          media.querySelectorAll('.rd-thumbs button').forEach(function (b) {
+            b.addEventListener('click', function () {
+              media.querySelector('.rd-main img').src = b.getAttribute('data-src');
+              media.querySelectorAll('.rd-thumbs button').forEach(function (o) { o.removeAttribute('aria-current'); });
+              b.setAttribute('aria-current', 'true');
+            });
+          });
+        } else { inner.classList.add('no-media'); media.hidden = true; media.innerHTML = ''; }
+        var h = '';
+        if (d.p) h += d.p.map(function (x) { return '<p>' + e(x) + '</p>'; }).join('');
+        if (d.mt || d.dl) h += '<div class="kv">' + (d.mt ? '<div><b>' + e(d.mt) + '</b><span>montant du marché</span></div>' : '') + (d.dl ? '<div><b>' + e(d.dl) + '</b><span>délai global</span></div>' : '') + '</div>';
+        if (d.lots) h += '<ul class="rd-lots">' + d.lots.map(function (l) { return '<li>' + e(l) + '</li>'; }).join('') + '</ul>';
+        var rows = [['Réception', d.rc], ["Maître d'ouvrage", d.moa], ["Maître d'ouvrage délégué", d.moad], ['Architecte', d.archi], ["Bureau d'études", d.bet]].filter(function (r) { return r[1]; });
+        if (rows.length) h += '<dl class="rd-dl">' + rows.map(function (r) { return '<dt>' + e(r[0]) + '</dt><dd>' + e(r[1]) + '</dd>'; }).join('') + '</dl>';
+        if (!d.mt && !d.p) h += '<p class="rd-empty">Intervention de Thermique Sud Vendée sur ce bâtiment. Le détail du marché n\'est pas publié' + (d.img && d.img.length ? ', mais vous pouvez parcourir les photos du chantier.' : '.') + '</p>';
+        $('rd-content').innerHTML = h;
+        var v = visible(), pos = v.indexOf(i);
+        $('rd-prev').disabled = pos <= 0; $('rd-next').disabled = pos < 0 || pos >= v.length - 1;
+        try { history.replaceState(null, '', '#ref-' + i); } catch (err) {}
+      }
+      function open(i, from) {
+        opener = from || null; render(i);
+        if (typeof dlg.showModal === 'function') { if (!dlg.open) dlg.showModal(); } else dlg.setAttribute('open', '');
+        dlg.querySelector('.rd-close').focus();
+      }
+      function close() { if (dlg.open && dlg.close) dlg.close(); else dlg.removeAttribute('open'); }
+      dlg.addEventListener('close', function () { try { history.replaceState(null, '', location.pathname + location.search); } catch (err) {} if (opener) opener.focus(); });
+      dlg.addEventListener('click', function (ev) { if (ev.target === dlg) close(); });
+      dlg.querySelector('.rd-close').addEventListener('click', close);
+      $('rd-prev').addEventListener('click', function () { var v = visible(), p = v.indexOf(cur); if (p > 0) render(v[p - 1]); });
+      $('rd-next').addEventListener('click', function () { var v = visible(), p = v.indexOf(cur); if (p > -1 && p < v.length - 1) render(v[p + 1]); });
+      document.querySelectorAll('.ref, .feat').forEach(function (b) { b.addEventListener('click', function () { open(+b.getAttribute('data-i'), b); }); });
+      var m = location.hash.match(/^#ref-(\d+)$/); if (m && DATA[+m[1]]) open(+m[1], document.getElementById('ref-' + m[1]));
     }
     document.querySelectorAll('.filters button').forEach(function (b) {
       b.addEventListener('click', function () {
